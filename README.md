@@ -25,11 +25,12 @@ S3-совместимом хранилище.
 ## Инициализация таблиц
 
     docker exec -i trino trino --catalog iceberg < sql/create_table.sql
+    docker exec -i postgres psql -U iceberg -d iceberg_catalog < sql/create_postgres_table.sql
     docker exec -i trino trino --catalog iceberg < sql/insert.sql
 
 ## Проверка
 
-    docker exec -i trino trino --catalog iceberg < sql/select.sql      # JOIN
+    docker exec -i trino trino --catalog iceberg < sql/federated_query.sql      # JOIN (federated query)
     docker exec -i trino trino --catalog iceberg < sql/timetravel.sql  # Time Travel
 
 ## Health-check
@@ -43,7 +44,8 @@ S3-совместимом хранилище.
 - `docker-compose.yml` — описание сервисов
 - `.env.example` — шаблон переменных окружения
 - `trino/catalog/iceberg.properties` — конфиг Iceberg-каталога
-- `sql/` — SQL-скрипты (create_table, insert, select, timetravel)
+- `trino/catalog/postgresql.properties` — конфиг PostgreSQL-каталога
+- `sql/` — SQL-скрипты (create_table, create_postgres_table, insert, federated query, timetravel)
 - `healthcheck/` — скрипты проверки живости сервисов
 
 ## Скриншоты

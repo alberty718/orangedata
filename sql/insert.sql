@@ -11,3 +11,10 @@ INSERT INTO iceberg.lakehouse.orders VALUES
 
 INSERT INTO iceberg.lakehouse.customers VALUES
 (4, 'Diana', 'FR');
+
+INSERT INTO country_region VALUES
+('DE', 'Europe'),
+('NL', 'Europe'),
+('ES', 'Europe'),
+('FR', 'Europe')
+ON CONFLICT (country) DO NOTHING;
