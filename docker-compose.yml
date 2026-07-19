@@ -76,7 +76,7 @@ services:
     container_name: airflow
     ports:
       - "8080:8080"
-    command: standalone
+    command: bash -c "rm -f /opt/airflow/airflow-webserver.pid && airflow standalone"
     env_file: .env
     environment:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"

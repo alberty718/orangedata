@@ -21,6 +21,10 @@ def create_tables():
         CREATE SCHEMA IF NOT EXISTS iceberg.gold
     """)
 
+    # ==========================
+    # fact_sales
+    # ==========================
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS iceberg.gold.fact_sales (
 
@@ -44,6 +48,45 @@ def create_tables():
         line_amount DOUBLE,
 
         payment_method VARCHAR
+
+    )
+    WITH (
+        format='PARQUET'
+    )
+    """)
+
+    # ==========================
+    # sales_daily
+    # ==========================
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS iceberg.gold.sales_daily (
+
+        sale_date DATE,
+        transactions_count BIGINT,
+        items_sold BIGINT,
+        revenue DOUBLE,
+        avg_check DOUBLE
+
+    )
+    WITH (
+        format='PARQUET'
+    )
+    """)
+
+    # ==========================
+    # product_sales
+    # ==========================
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS iceberg.gold.product_sales (
+
+        product_id VARCHAR,
+        product_name VARCHAR,
+        category VARCHAR,
+        brand VARCHAR,
+        units_sold BIGINT,
+        revenue DOUBLE
 
     )
     WITH (

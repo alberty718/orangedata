@@ -17,9 +17,7 @@ def load():
 
     cursor = conn.cursor()
 
-    cursor.execute("""
-    TRUNCATE TABLE iceberg.gold.fact_sales
-    """)
+    cursor.execute("DELETE FROM iceberg.gold.fact_sales")
 
     cursor.execute("""
     INSERT INTO iceberg.gold.fact_sales
@@ -57,6 +55,62 @@ def load():
 
     JOIN iceberg.silver.products p
         ON ti.product_id = p.product_id
+    """)
+
+    # ==========================
+    # sales_daily
+    # ==========================
+
+    cursor.execute("DELETE FROM iceberg.gold.sales_daily")
+
+    cursor.execute("""
+    INSERT INTO iceberg.gold.sales_daily
+
+    SELECT
+
+        DATE(ts) AS sale_date,
+
+        COUNT(DISTINCT transaction_id) AS transactions_count,
+
+        SUM(quantity) AS items_sold,
+
+        SUM(line_amount) AS revenue,
+
+        SUM(line_amount) / COUNT(DISTINCT transaction_id) AS avg_check
+
+    FROM iceberg.gold.fact_sales
+
+    GROUP BY DATE(ts)
+    """)
+
+    # ==========================
+    # product_sales
+    # ==========================
+
+    cursor.execute("DELETE FROM iceberg.gold.product_sales")
+
+    cursor.execute("""
+    INSERT INTO iceberg.gold.product_sales
+
+    SELECT
+
+        product_id,
+        product_name,
+        category,
+        brand,
+
+        SUM(quantity) AS units_sold,
+
+        SUM(line_amount) AS revenue
+
+    FROM iceberg.gold.fact_sales
+
+    GROUP BY
+
+        product_id,
+        product_name,
+        category,
+        brand
     """)
 
     conn.close()
