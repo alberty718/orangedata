@@ -150,12 +150,13 @@ docker compose up -d --build
 http://localhost:8080
 ```
 
-Данные для входа:
+Пароль можно получить командой:
 
+```bash
+docker compose logs airflow | grep password
 ```
-Логин: airflow
-Пароль: airflow
-```
+
+Логин - admin
 
 ---
 
