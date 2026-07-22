@@ -94,19 +94,41 @@ def _chart(session, name, dataset_id, viz_type, params, dashboard_id):
     current = _named(session, "chart", "slice_name", name)
     if current:
         _api(session, "PUT", f"/api/v1/chart/{current['id']}", json=payload)
-        return current["id"]
-    return _api(session, "POST", "/api/v1/chart/", json=payload)["id"]
+        chart_id = current["id"]
+    else:
+        chart_id = _api(session, "POST", "/api/v1/chart/", json=payload)["id"]
+    # A dashboard tile links to its chart by UUID, not just by numeric id - see
+    # https://github.com/apache/superset/issues/32966 and
+    # https://github.com/apache/superset/issues/15456. Charts created through the plain
+    # chart API don't automatically get wired into a hand-built position_json unless we
+    # embed that UUID in the tile's meta ourselves, so we fetch it explicitly here.
+    chart_uuid = _api(session, "GET", f"/api/v1/chart/{chart_id}").get("result", {}).get("uuid")
+    return chart_id, chart_uuid
 
 
-def _layout(session, dashboard_id, charts):
+def _layout(session, dashboard_id, title, charts):
     rows = [f"ROW-{index}" for index in range(len(charts))]
-    position = {"DASHBOARD_VERSION_KEY": "v2", "ROOT_ID": {"id": "ROOT_ID", "type": "ROOT", "children": ["GRID_ID"]},
-                "GRID_ID": {"id": "GRID_ID", "type": "GRID", "children": rows}}
-    for index, (title, chart_id) in enumerate(charts.items()):
+    position = {
+        "DASHBOARD_VERSION_KEY": "v2",
+        "ROOT_ID": {"id": "ROOT_ID", "type": "ROOT", "children": ["GRID_ID"]},
+        "GRID_ID": {"id": "GRID_ID", "type": "GRID", "children": rows, "parents": ["ROOT_ID"]},
+        # A missing HEADER_ID node makes the dashboard front end throw on load
+        # ("Unexpected error") regardless of whether the charts themselves are fine -
+        # this was the actual cause of every dashboard failing to open.
+        "HEADER_ID": {"id": "HEADER_ID", "type": "HEADER", "meta": {"text": title}},
+    }
+    for index, (chart_title, (chart_id, chart_uuid)) in enumerate(charts.items()):
         row, node = rows[index], f"CHART-{chart_id}"
-        position[row] = {"id": row, "type": "ROW", "children": [node], "parents": ["ROOT_ID", "GRID_ID"]}
+        position[row] = {
+            "id": row, "type": "ROW", "children": [node],
+            "parents": ["ROOT_ID", "GRID_ID"],
+            "meta": {"background": "BACKGROUND_TRANSPARENT"},
+        }
+        meta = {"chartId": chart_id, "sliceName": chart_title, "width": 12, "height": 32}
+        if chart_uuid:
+            meta["uuid"] = chart_uuid
         position[node] = {"id": node, "type": "CHART", "children": [], "parents": ["ROOT_ID", "GRID_ID", row],
-                          "meta": {"chartId": chart_id, "sliceName": title, "width": 12, "height": 32}}
+                          "meta": meta}
     _api(session, "PUT", f"/api/v1/dashboard/{dashboard_id}", json={"position_json": json.dumps(position), "published": True})
 
 
@@ -116,23 +138,50 @@ def provision_dashboards():
     database_id = _database(session)
     daily, products = _dataset(session, database_id, "sales_daily"), _dataset(session, database_id, "product_sales")
 
-    overview_id = _dashboard(session, "Retail — Executive Overview", "retail-executive-overview")
+    overview_title = "Retail — Executive Overview"
+    overview_id = _dashboard(session, overview_title, "retail-executive-overview")
     overview = {
         "Выручка": _chart(session, "KPI — Выручка", daily, "big_number_total", {"metric": {"expressionType": "SQL", "sqlExpression": "SUM(revenue)", "label": "Выручка"}}, overview_id),
         "Транзакции": _chart(session, "KPI — Транзакции", daily, "big_number_total", {"metric": {"expressionType": "SQL", "sqlExpression": "SUM(transactions_count)", "label": "Транзакции"}}, overview_id),
         "Средний чек": _chart(session, "KPI — Средний чек", daily, "big_number_total", {"metric": {"expressionType": "SQL", "sqlExpression": "AVG(avg_check)", "label": "Средний чек"}}, overview_id),
     }
-    _layout(session, overview_id, overview)
+    _layout(session, overview_id, overview_title, overview)
 
-    trend_id = _dashboard(session, "Retail — Sales Trend", "retail-sales-trend")
-    trend_params = {"granularity_sqla": "sale_date", "time_grain_sqla": "P1D", "time_range": "No filter"}
+    trend_title = "Retail — Sales Trend"
+    trend_id = _dashboard(session, trend_title, "retail-sales-trend")
+    # NOTE: since Superset 3.x, "Generic Chart Axes" (GENERIC_CHART_AXES, on by default,
+    # including in 4.1.2) is used for every echarts_* viz type. These charts no longer read
+    # the temporal column from "granularity_sqla" (that field is now legacy/unused for
+    # rendering) — they require an explicit "x_axis" param telling Superset which column
+    # to plot on the X axis. Without it, the query has no temporal dimension to group by,
+    # so the chart silently returns/renders empty. We also add an explicit TEMPORAL_RANGE
+    # adhoc_filter on that column, which is how Superset scopes the "No filter" time range
+    # to a specific column when generic chart axes are in play.
+    trend_params = {
+        "x_axis": "sale_date",
+        "time_grain_sqla": "P1D",
+        "granularity_sqla": "sale_date",  # kept for backwards compat / SQL Lab preview only
+        "time_range": "No filter",
+        "adhoc_filters": [
+            {
+                "clause": "WHERE",
+                "subject": "sale_date",
+                "operator": "TEMPORAL_RANGE",
+                "comparator": "No filter",
+                "expressionType": "SIMPLE",
+            }
+        ],
+        "x_axis_sort_asc": True,
+        "row_limit": 10000,
+    }
     trend = {
         "Динамика выручки": _chart(session, "Динамика выручки", daily, "echarts_timeseries_line", {**trend_params, "metrics": [{"expressionType": "SQL", "sqlExpression": "SUM(revenue)", "label": "Выручка"}]}, trend_id),
         "Динамика транзакций": _chart(session, "Динамика транзакций", daily, "echarts_timeseries_line", {**trend_params, "metrics": [{"expressionType": "SQL", "sqlExpression": "SUM(transactions_count)", "label": "Транзакции"}]}, trend_id),
     }
-    _layout(session, trend_id, trend)
+    _layout(session, trend_id, trend_title, trend)
 
-    product_dashboard_id = _dashboard(session, "Retail — Product Performance", "retail-product-performance")
+    product_title = "Retail — Product Performance"
+    product_dashboard_id = _dashboard(session, product_title, "retail-product-performance")
     product = {
         "Топ-10 товаров": _chart(
             session,
@@ -154,5 +203,5 @@ def provision_dashboards():
             product_dashboard_id,
         ),
     }
-    _layout(session, product_dashboard_id, product)
+    _layout(session, product_dashboard_id, product_title, product)
     LOGGER.info("Three Superset dashboards were provisioned.")
