@@ -21,8 +21,7 @@ MINIO_USER = os.getenv("MINIO_ROOT_USER", "minioadmin")
 MINIO_PASS = os.getenv("MINIO_ROOT_PASSWORD", "minioadmin")
 BUCKET_NAME = "lakehouse"
 
-# Сколько дней истории генерировать за один запуск DAG (для холодного старта форкаста)
-BACKFILL_DAYS = int(os.getenv("POS_BACKFILL_DAYS", "14"))
+BACKFILL_DAYS = int(os.getenv("POS_BACKFILL_DAYS", "180"))
 
 
 def _load_reference_ids():
@@ -99,12 +98,12 @@ def produce_pos_events(**context):
         futures = []
         total_events = 0
 
-        # Генерируем BACKFILL_DAYS дней истории: от (BACKFILL_DAYS-1) дней назад до сегодня.
         for day_offset in range(BACKFILL_DAYS - 1, -1, -1):
             day_ts = now - timedelta(days=day_offset)
             daily_events = max(40, int(random.gauss(events_per_day, events_per_day * 0.2)))
+            if day_ts.weekday() >= 5:
+                daily_events = int(daily_events * 1.8)
             for _ in range(daily_events):
-                # разбрасываем время событий в течение дня, а не все в одну секунду
                 event_ts = day_ts.replace(
                     hour = random.choices(
                         [8,9,10,11,12,13,14,15,16,17,18,19,20,21],
