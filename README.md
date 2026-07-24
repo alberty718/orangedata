@@ -34,10 +34,13 @@ Kafka Producer
  Gold (Iceberg)
       │
       ▼
+ ML: прогноз выручки
+      │
+      ▼
  Apache Superset
 ```
 
-Всё это выполняется одним DAG в Airflow: генерация клиентов и товаров → генерация транзакций и публикация в Kafka → чтение из Kafka → запись Raw в MinIO → очистка в Silver → витрины в Gold → создание датасетов и дашборда в Superset.
+Всё это выполняется одним DAG в Airflow: генерация клиентов и товаров → генерация транзакций и публикация в Kafka → чтение из Kafka → запись Raw в MinIO → очистка в Silver → витрины в Gold → обучение ML-модели и прогноз выручки → создание датасетов и дашборда в Superset.
 
 ---
 
@@ -47,7 +50,36 @@ Kafka Producer
 
 **Silver** — очищенные и нормализованные таблицы: `customers`, `products`, `pos_transactions`, `transaction_items`.
 
-**Gold** — витрины для аналитики: `fact_sales`, `sales_daily`, `product_sales`.
+**Gold** — витрины для аналитики: `fact_sales`, `sales_daily`, `product_sales`, `revenue_forecast` (прогноз выручки от ML-модели, см. раздел ниже).
+
+---
+
+## ML-модель прогнозирования выручки
+
+В основной DAG (`retail_lakehouse_pipeline`) встроены задачи `ensure_forecast_table` и `train_and_forecast_revenue` (`airflow/dags/etl/revenue_forecaster.py`), которые выполняются на каждом запуске сразу после сборки Gold-слоя:
+
+```
+ ...validate_gold_layer
+      │
+      ▼
+ ensure_forecast_table
+      │
+      ▼
+ train_and_forecast_revenue
+      │
+      ▼
+ provision_superset_dashboards
+```
+
+Как это работает:
+
+- Источник данных — витрина `gold.sales_daily` (дневная выручка).
+- Признаки: день недели, флаг выходного, лаги выручки (1, 2, 7 дней), скользящие средние (3 и 7 дней).
+- На каждом запуске обучаются две модели — `LinearRegression` и `RandomForestRegressor` — на исторической части данных (80/20 split), по MAE на отложенной выборке выбирается лучшая, дообучается на всех данных и строит прогноз на `REVENUE_FORECAST_DAYS` дней вперёд (по умолчанию 7).
+- Результат (`sale_date`, `revenue_forecast`, `model_name`, `generated_at`) перезаписывается в таблицу `gold.revenue_forecast`.
+- Отдельного хранилища артефактов модели нет — переобучение "с нуля" на каждом запуске сознательно оставлено дешёвым решением, т.к. датасет небольшой.
+- Прогноз публикуется в Superset отдельным датасетом/чартом "Прогноз выручки".
+- Если в `gold.sales_daily` меньше 14 дней истории, задача просто пропускает обучение (недостаточно данных для лагов и валидационного сплита).
 
 ---
 
